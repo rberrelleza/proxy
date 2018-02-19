@@ -1,17 +1,17 @@
-package tcpproxy
+package proxy
 
 import (
 	"crypto/tls"
 	"fmt"
 	"net"
 	"os"
-	"sync/atomic"
+	"sync"
 	"time"
 )
 
-// Proxy is a TCP server that takes an incoming request and sends it to another
+// Server is a TCP server that takes an incoming request and sends it to another
 // server, proxying the response back to the client.
-type Proxy struct {
+type Server struct {
 	// Target address
 	Target *net.TCPAddr
 
@@ -32,13 +32,12 @@ type Proxy struct {
 	Timeout time.Duration
 }
 
-// NewProxy created a new proxy which sends all packet to target. The function dir
+// NewServer created a new proxy which sends all packet to target. The function dir
 // intercept and can change the packet before sending it to the target.
-func NewProxy(target *net.TCPAddr, dir func(*[]byte), config *tls.Config) *Proxy {
-	p := &Proxy{
+func NewServer(target *net.TCPAddr, dir func(*[]byte), config *tls.Config) *Server {
+	p := &Server{
 		Target:   target,
 		Director: dir,
-		Timeout:  time.Minute,
 		Config:   config,
 	}
 	return p
@@ -46,7 +45,7 @@ func NewProxy(target *net.TCPAddr, dir func(*[]byte), config *tls.Config) *Proxy
 
 // ListenAndServe listens on the TCP network address laddr and then handle packets
 // on incoming connections.
-func (p *Proxy) ListenAndServe(laddr *net.TCPAddr) {
+func (p *Server) ListenAndServe(laddr *net.TCPAddr) {
 	p.Addr = laddr
 
 	var listener net.Listener
@@ -62,7 +61,7 @@ func (p *Proxy) ListenAndServe(laddr *net.TCPAddr) {
 // ListenAndServeTLS acts identically to ListenAndServe, except that it uses TLS
 // protocol. Additionally, files containing a certificate and matching private key
 // for the server must be provided.
-func (p *Proxy) ListenAndServeTLS(laddr *net.TCPAddr, certFile, keyFile string) {
+func (p *Server) ListenAndServeTLS(laddr *net.TCPAddr, certFile, keyFile string) {
 	p.Addr = laddr
 
 	var listener net.Listener
@@ -81,7 +80,7 @@ func (p *Proxy) ListenAndServeTLS(laddr *net.TCPAddr, certFile, keyFile string) 
 	p.serve(listener)
 }
 
-func (p *Proxy) serve(ln net.Listener) {
+func (p *Server) serve(ln net.Listener) {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -94,7 +93,7 @@ func (p *Proxy) serve(ln net.Listener) {
 }
 
 // handleConn handles connection.
-func (p *Proxy) handleConn(conn net.Conn) {
+func (p *Server) handleConn(conn net.Conn) {
 	// connects to target server
 	var rconn net.Conn
 	var err error
@@ -108,33 +107,29 @@ func (p *Proxy) handleConn(conn net.Conn) {
 		return
 	}
 
-	// pipeDone counts closed pipe
-	var pipeDone int32
-	var timer *time.Timer
+	var pipeMux sync.Mutex
+	var pipeDone = false
 
 	// write to dst what it reads from src
 	var pipe = func(src, dst net.Conn, filter func(b *[]byte)) {
 		defer func() {
-			// if it is the first pipe to end...
-			if v := atomic.AddInt32(&pipeDone, 1); v == 1 {
-				// ...wait 'timeout' seconds before closing connections
-				timer = time.AfterFunc(p.Timeout, func() {
-					// test if the other pipe is still alive before closing conn
-					if atomic.AddInt32(&pipeDone, 1) == 2 {
-						conn.Close()
-						rconn.Close()
-					}
-				})
-			} else if v == 2 {
+			pipeMux.Lock()
+			// if first pipe to end, closing conn will end the other pipe.
+			if !pipeDone {
 				conn.Close()
 				rconn.Close()
-				timer.Stop()
 			}
+			pipeDone = true
+			pipeMux.Unlock()
 		}()
 
 		buff := make([]byte, 65535)
 		for {
+			src.SetReadDeadline(time.Now().Add(10 * time.Second))
 			n, err := src.Read(buff)
+			if err, ok := err.(net.Error); ok && err.Timeout() {
+				continue
+			}
 			if err != nil {
 				return
 			}
@@ -144,7 +139,7 @@ func (p *Proxy) handleConn(conn net.Conn) {
 				filter(&b)
 			}
 
-			n, err = dst.Write(b)
+			_, err = dst.Write(b)
 			if err != nil {
 				return
 			}

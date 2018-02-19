@@ -1,8 +1,8 @@
-# kahlys/tcpproxy
+# kahlys/proxy
 
-[![godoc](https://godoc.org/github.com/kahlys/tcpproxy?status.svg)](https://godoc.org/github.com/kahlys/tcpproxy) 
-[![build](https://api.travis-ci.org/kahlys/tcpproxy.svg?branch=master)](https://travis-ci.org/kahlys/tcpproxy)
-[![go report](https://goreportcard.com/badge/github.com/kahlys/tcpproxy)](https://goreportcard.com/report/github.com/kahlys/tcpproxy)
+[![godoc](https://godoc.org/github.com/kahlys/proxy?status.svg)](https://godoc.org/github.com/kahlys/proxy) 
+[![build](https://api.travis-ci.org/kahlys/proxy.svg?branch=master)](https://travis-ci.org/kahlys/proxy)
+[![go report](https://goreportcard.com/badge/github.com/kahlys/proxy)](https://goreportcard.com/report/github.com/kahlys/proxy)
 
 Simple tcp proxy package and executable binary in Golang. The executable provides both TCP and TCP/TLS connection.
 
@@ -10,7 +10,7 @@ Simple tcp proxy package and executable binary in Golang. The executable provide
 
 With a correctly configured [Go toolchain](https://golang.org/doc/install):
 ```
-go get -u github.com/kahlys/tcpproxy/cmd/tcpproxy
+go get -u github.com/kahlys/proxy/cmd/tcpproxy
 ```
 
 ## Usage
@@ -24,7 +24,7 @@ You can specify some options.
 $ tcpproxy -h
 Usage of tcpproxy:
 
-  -laddr string
+  -lhost string
     	proxy local address (default ":4444")
 
   -lcert string
@@ -36,12 +36,9 @@ Usage of tcpproxy:
   -ltls
     	tls/ssl between client and proxy
       
-  -raddr string
+  -rhots string
     	proxy remote address (default ":80")
       
   -rtls
     	tls/ssl between proxy and target
-      
-  -t int
-    	wait  seconds before closing second pipe
 ```

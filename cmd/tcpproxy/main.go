@@ -1,24 +1,22 @@
 package main
 
 import (
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"net"
-	"crypto/tls"
 	"os"
-	"time"
 
-	"github.com/kahlys/tcpproxy"
+	"github.com/kahlys/proxy"
 )
 
 var (
-	localAddr  = flag.String("laddr", ":4444", "proxy local address")
-	remoteAddr = flag.String("raddr", ":80", "proxy remote address")
+	localAddr  = flag.String("lhost", ":4444", "proxy local address")
+	remoteAddr = flag.String("rhost", ":80", "proxy remote address")
 	localTLS   = flag.Bool("ltls", false, "tls/ssl between client and proxy")
 	localCert  = flag.String("lcert", "", "proxy certificate x509 file for tls/ssl use")
 	localKey   = flag.String("lkey", "", "proxy key x509 file for tls/ssl use")
 	remoteTLS  = flag.Bool("rtls", false, "tls/ssl between proxy and target")
-	timeout    = flag.Int64("t", 0, "wait  seconds before closing second pipe")
 )
 
 func main() {
@@ -40,15 +38,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	var p = new(tcpproxy.Proxy)
+	var p = new(proxy.Server)
 	if *remoteTLS {
 		// Testing only. You needs to specify config.ServerName insteand of InsecureSkipVerify
-		p = tcpproxy.NewProxy(raddr, nil, &tls.Config{InsecureSkipVerify: true})
+		p = proxy.NewServer(raddr, nil, &tls.Config{InsecureSkipVerify: true})
 	} else {
-		p = tcpproxy.NewProxy(raddr, nil, nil)
+		p = proxy.NewServer(raddr, nil, nil)
 	}
-
-	p.Timeout = time.Duration(*timeout) * time.Second
 
 	fmt.Println("Proxying from " + laddr.String() + " to " + p.Target.String())
 	if *localTLS {

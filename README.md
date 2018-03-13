@@ -6,6 +6,8 @@
 
 Simple tcp proxy package and executable binary in Golang. The executable provides both TCP and TCP/TLS connection.
 
+:warning: This code is for test purpose, it is sometimes ugly, it is not production ready, and the API will probably change. :warning:
+
 ## Installation
 
 With a correctly configured [Go toolchain](https://golang.org/doc/install):

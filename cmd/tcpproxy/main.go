@@ -3,58 +3,47 @@ package main
 import (
 	"crypto/tls"
 	"flag"
-	"fmt"
-	"net"
-	"os"
+	"log"
 
 	"github.com/kahlys/proxy"
 )
 
 var (
+	// addresses
 	localAddr  = flag.String("lhost", ":4444", "proxy local address")
-	remoteAddr = flag.String("rhost", ":80", "proxy remote address")
-	localTLS   = flag.Bool("ltls", false, "tls/ssl between client and proxy")
-	localCert  = flag.String("lcert", "", "proxy certificate x509 file for tls/ssl use")
-	localKey   = flag.String("lkey", "", "proxy key x509 file for tls/ssl use")
-	remoteTLS  = flag.Bool("rtls", false, "tls/ssl between proxy and target")
+	targetAddr = flag.String("rhost", ":80", "proxy remote address")
+
+	// tls configuration for proxy as a server (listen)
+	localTLS  = flag.Bool("ltls", false, "tls/ssl between client and proxy, you must set 'lcert' and 'lkey'")
+	localCert = flag.String("lcert", "", "certificate file for proxy server side")
+	localKey  = flag.String("lkey", "", "key x509 file for proxy server side")
+
+	// tls configuration for proxy as a client (connection to target)
+	targetTLS  = flag.Bool("rtls", false, "tls/ssl between proxy and target, you must set 'rcert' and 'rkey'")
+	targetCert = flag.String("rcert", "", "certificate file for proxy client side")
+	targetKey  = flag.String("rkey", "", "key x509 file for proxy client side")
 )
 
 func main() {
 	flag.Parse()
 
-	laddr, err := net.ResolveTCPAddr("tcp", *localAddr)
-	if err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
-	}
-	raddr, err := net.ResolveTCPAddr("tcp", *remoteAddr)
-	if err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
+	p := proxy.Server{
+		Addr:   *localAddr,
+		Target: *targetAddr,
 	}
 
-	if *localTLS && !exists(*localCert) && !exists(*localKey) {
-		fmt.Println("certificate and key file required")
-		os.Exit(1)
+	if *targetTLS {
+		cert, err := tls.LoadX509KeyPair(*targetCert, *targetKey)
+		if err != nil {
+			log.Fatalf("configuration tls for target connection: %v", err)
+		}
+		p.TLSConfigTarget = &tls.Config{Certificates: []tls.Certificate{cert}, InsecureSkipVerify: true}
 	}
 
-	var p = new(proxy.Server)
-	if *remoteTLS {
-		// Testing only. You needs to specify config.ServerName insteand of InsecureSkipVerify
-		p = proxy.NewServer(raddr, nil, &tls.Config{InsecureSkipVerify: true})
-	} else {
-		p = proxy.NewServer(raddr, nil, nil)
-	}
-
-	fmt.Println("Proxying from " + laddr.String() + " to " + p.Target.String())
+	log.Println("Proxying from " + p.Addr + " to " + p.Target)
 	if *localTLS {
-		p.ListenAndServeTLS(laddr, *localCert, *localKey)
+		p.ListenAndServeTLS(*localCert, *localKey)
 	} else {
-		p.ListenAndServe(laddr)
+		p.ListenAndServe()
 	}
-}
-
-func exists(filename string) bool {
-	_, err := os.Stat(filename)
-	return !os.IsNotExist(err)
 }

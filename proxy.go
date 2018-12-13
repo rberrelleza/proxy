@@ -2,135 +2,100 @@ package proxy
 
 import (
 	"crypto/tls"
-	"fmt"
+	"log"
 	"net"
-	"os"
-	"sync"
-	"time"
 )
 
 // Server is a TCP server that takes an incoming request and sends it to another
 // server, proxying the response back to the client.
 type Server struct {
-	// Target address
-	Target *net.TCPAddr
+	// TCP address to listen on
+	Addr string
 
-	// Local address
-	Addr *net.TCPAddr
+	// TCP address of target server
+	Target string
 
-	// Director must be a function which modifies the request into a new request
-	// to be sent. Its response is then copied back to the client unmodified.
-	Director func(b *[]byte)
+	// Director is an optional function that modifies the request from a client to the target server.
+	ModifyRequest func(b *[]byte)
 
-	// If config is not nil, the proxy connects to the target address and then
-	// initiates a TLS handshake.
-	Config *tls.Config
+	// ModifyResponse is an optional function that modifies the response from the target server.
+	ModifyResponse func(b *[]byte)
 
-	// Timeout is the duration the proxy is staying alive without activity from
-	// both client and target. Also, if a pipe is closed, the proxy waits 'timeout'
-	// seconds before closing the other one. By default timeout is 60 seconds.
-	Timeout time.Duration
-}
+	// TLS configuration to listen on.
+	TLSConfig *tls.Config
 
-// NewServer created a new proxy which sends all packet to target. The function dir
-// intercept and can change the packet before sending it to the target.
-func NewServer(target *net.TCPAddr, dir func(*[]byte), config *tls.Config) *Server {
-	p := &Server{
-		Target:   target,
-		Director: dir,
-		Config:   config,
-	}
-	return p
+	// TLS configuration for the proxy if needed to connect to the target server with TLS protocol.
+	// If nil, TCP protocol is used.
+	TLSConfigTarget *tls.Config
 }
 
 // ListenAndServe listens on the TCP network address laddr and then handle packets
 // on incoming connections.
-func (p *Server) ListenAndServe(laddr *net.TCPAddr) {
-	p.Addr = laddr
-
-	var listener net.Listener
-	listener, err := net.ListenTCP("tcp", laddr)
+func (s *Server) ListenAndServe() error {
+	listener, err := net.Listen("tcp", s.Addr)
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		return err
 	}
-
-	p.serve(listener)
+	return s.serve(listener)
 }
 
 // ListenAndServeTLS acts identically to ListenAndServe, except that it uses TLS
 // protocol. Additionally, files containing a certificate and matching private key
-// for the server must be provided.
-func (p *Server) ListenAndServeTLS(laddr *net.TCPAddr, certFile, keyFile string) {
-	p.Addr = laddr
-
-	var listener net.Listener
-	cer, err := tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		fmt.Println(err)
-		return
+// for the server must be provided if neither the Server's TLSConfig.Certificates nor
+// TLSConfig.GetCertificate are populated.
+func (s *Server) ListenAndServeTLS(certFile, keyFile string) error {
+	configHasCert := len(s.TLSConfig.Certificates) > 0 || s.TLSConfig.GetCertificate != nil
+	if !configHasCert || certFile != "" || keyFile != "" {
+		var err error
+		s.TLSConfig.Certificates = make([]tls.Certificate, 1)
+		s.TLSConfig.Certificates[0], err = tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return err
+		}
 	}
-	config := &tls.Config{Certificates: []tls.Certificate{cer}}
-	listener, err = tls.Listen("tcp", laddr.String(), config)
+	listener, err := tls.Listen("tcp", s.Addr, s.TLSConfig)
 	if err != nil {
-		fmt.Println(err)
-		return
+		return err
 	}
-
-	p.serve(listener)
+	return s.serve(listener)
 }
 
-func (p *Server) serve(ln net.Listener) {
+func (s *Server) serve(ln net.Listener) error {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			continue
 		}
-
-		go p.handleConn(conn)
+		go s.handleConn(conn)
 	}
 }
 
-// handleConn handles connection.
-func (p *Server) handleConn(conn net.Conn) {
+func (s *Server) handleConn(conn net.Conn) {
 	// connects to target server
 	var rconn net.Conn
 	var err error
-	if p.Config == nil {
-		rconn, err = net.Dial("tcp", p.Target.String())
+	if s.TLSConfigTarget == nil {
+		rconn, err = net.Dial("tcp", s.Target)
 	} else {
-		rconn, err = tls.Dial("tcp", p.Target.String(), p.Config)
+		rconn, err = tls.Dial("tcp", s.Target, s.TLSConfigTarget)
 	}
 	if err != nil {
-		fmt.Println(err)
 		return
 	}
-
-	var pipeMux sync.Mutex
-	var pipeDone = false
 
 	// write to dst what it reads from src
 	var pipe = func(src, dst net.Conn, filter func(b *[]byte)) {
 		defer func() {
-			pipeMux.Lock()
-			// if first pipe to end, closing conn will end the other pipe.
-			if !pipeDone {
-				conn.Close()
-				rconn.Close()
-			}
-			pipeDone = true
-			pipeMux.Unlock()
+			conn.Close()
+			rconn.Close()
 		}()
 
 		buff := make([]byte, 65535)
 		for {
-			src.SetReadDeadline(time.Now().Add(10 * time.Second))
 			n, err := src.Read(buff)
-			if err, ok := err.(net.Error); ok && err.Timeout() {
-				continue
-			}
 			if err != nil {
+				log.Println(err)
 				return
 			}
 			b := buff[:n]
@@ -141,11 +106,12 @@ func (p *Server) handleConn(conn net.Conn) {
 
 			_, err = dst.Write(b)
 			if err != nil {
+				log.Println(err)
 				return
 			}
 		}
 	}
 
-	go pipe(conn, rconn, p.Director)
-	go pipe(rconn, conn, nil)
+	go pipe(conn, rconn, s.ModifyRequest)
+	go pipe(rconn, conn, s.ModifyResponse)
 }

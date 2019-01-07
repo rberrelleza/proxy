@@ -15,7 +15,7 @@ type Server struct {
 	// TCP address of target server
 	Target string
 
-	// Director is an optional function that modifies the request from a client to the target server.
+	// ModifyRequest is an optional function that modifies the request from a client to the target server.
 	ModifyRequest func(b *[]byte)
 
 	// ModifyResponse is an optional function that modifies the response from the target server.
